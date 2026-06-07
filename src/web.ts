@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { mkdirSync } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { execSync, execFileSync } from 'node:child_process'
 import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL } from './config.js'
@@ -60,10 +61,22 @@ export function startWebServer(port = 3420): http.Server {
   ensureDirs()
 
   const DASHBOARD_TOKEN = loadOrCreateDashboardToken()
+  // When bound to 0.0.0.0 the dashboard is reached over the LAN by its real
+  // interface IP (e.g. http://192.168.0.33:3420), which is the browser Origin
+  // on state-changing requests. WEB_HOST itself ('0.0.0.0') never appears as an
+  // Origin, so enumerate the host's non-internal IPv4 addresses and whitelist
+  // them -- otherwise LAN access hits "Origin not allowed" on every POST.
+  const lanOrigins = (WEB_HOST === '0.0.0.0' || WEB_HOST === '::')
+    ? Object.values(networkInterfaces())
+        .flat()
+        .filter((ni): ni is NonNullable<typeof ni> => !!ni && ni.family === 'IPv4' && !ni.internal)
+        .map((ni) => `http://${ni.address}:${port}`)
+    : []
   const allowedOrigins = new Set([
     `http://localhost:${port}`,
     `http://127.0.0.1:${port}`,
-    ...( WEB_HOST !== 'localhost' && WEB_HOST !== '127.0.0.1' ? [`http://${WEB_HOST}:${port}`] : []),
+    ...( WEB_HOST !== 'localhost' && WEB_HOST !== '127.0.0.1' && WEB_HOST !== '0.0.0.0' && WEB_HOST !== '::' ? [`http://${WEB_HOST}:${port}`] : []),
+    ...lanOrigins,
     ...(DASHBOARD_PUBLIC_URL ? [DASHBOARD_PUBLIC_URL.replace(/\/$/, '')] : []),
   ])
   const isSafeMethod = (m: string) => m === 'GET' || m === 'HEAD' || m === 'OPTIONS'
