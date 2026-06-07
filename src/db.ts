@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, chmodSync, openSync, closeSync } from 'node:fs'
-import { STORE_DIR, DB_FILENAME, ALLOWED_CHAT_ID, OLLAMA_URL } from './config.js'
+import { STORE_DIR, DB_FILENAME, ALLOWED_CHAT_ID, OLLAMA_URL, EMBED_OLLAMA_URL, EMBED_MODEL } from './config.js'
 import { logger } from './logger.js'
 
 let db: Database.Database
@@ -1385,13 +1385,13 @@ export function markPendingTaskRetryAlert(taskName: string, agentName: string, t
     .run(ts, taskName, agentName).changes > 0
 }
 
-// --- Vector Search (Ollama + nomic-embed-text) ---
-
-const EMBED_MODEL = 'nomic-embed-text'
+// --- Vector Search (Ollama embeddings) ---
+// Model + host come from config (EMBED_MODEL / EMBED_OLLAMA_URL) so the embedding
+// backend can be pointed at a dedicated GPU box independent of the global Ollama.
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
   try {
-    const resp = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+    const resp = await fetch(`${EMBED_OLLAMA_URL}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: EMBED_MODEL, prompt: text.slice(0, 2000) }),
@@ -1402,7 +1402,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
     // Debug-level so it doesn't spam default INFO logs when Ollama isn't
     // running (the common case on most user machines). Enables "why does
     // hybrid search only return FTS results?" diagnostics without noise.
-    logger.debug({ err, ollamaUrl: OLLAMA_URL }, 'Embedding generation failed (Ollama not running?)')
+    logger.debug({ err, ollamaUrl: EMBED_OLLAMA_URL }, 'Embedding generation failed (Ollama not running?)')
     return null
   }
 }

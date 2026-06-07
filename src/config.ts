@@ -34,6 +34,12 @@ export const WEB_PORT = parseInt(env['WEB_PORT'] ?? '3420', 10)
 export const WEB_HOST = env['WEB_HOST'] ?? '127.0.0.1'
 export const DASHBOARD_PUBLIC_URL = env['DASHBOARD_PUBLIC_URL'] ?? ''
 export const OLLAMA_URL = env['OLLAMA_URL'] ?? 'http://localhost:11434'
+// Embedding can target a different Ollama host/model than the global OLLAMA_URL
+// (which also serves memory categorization). Lets the heavy embedding model run
+// on a dedicated GPU box while categorization stays local. Defaults preserve the
+// previous behavior: local OLLAMA_URL + nomic-embed-text.
+export const EMBED_OLLAMA_URL = env['EMBED_OLLAMA_URL'] ?? OLLAMA_URL
+export const EMBED_MODEL = env['EMBED_MODEL'] ?? 'nomic-embed-text'
 
 export const CHANNEL_PROVIDER: ChannelProviderType = getProviderType(env['CHANNEL_PROVIDER'])
 export const CHANNEL_TOKEN = getChannelToken(CHANNEL_PROVIDER, env)
