@@ -63,7 +63,7 @@ export async function tryHandleConnectorsHu(ctx: RouteContext): Promise<boolean>
 
   if (path === '/api/connectors-hu/install' && method === 'POST') {
     try {
-      const result = await runCommand('/bin/sh', ['-c', 'curl -fsSL https://connectors.hu/install.sh | sh'], { timeout: INSTALL_TIMEOUT })
+      const result = await runCommand('/bin/bash', ['-c', 'curl -fsSL https://connectors.hu/install.sh | bash'], { timeout: INSTALL_TIMEOUT })
       const { installed } = await isInstalled()
       json(res, { ok: result.ok, installed, output: result.output })
       if (result.ok) logger.info('connectors CLI installed')
