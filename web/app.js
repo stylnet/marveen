@@ -86,7 +86,8 @@ function switchPage(pageId) {
   if (pageId === 'kanban') loadKanban()
   if (pageId === 'tasks') loadSchedules()
   if (pageId === 'agents') loadAgents()
-  if (pageId === 'memories') { loadMemAgents(); loadMemStats(); loadEmbedConfig(); loadMemories() }
+  if (pageId === 'memories') { loadMemAgents(); loadMemStats(); loadMemories() }
+  if (pageId === 'settings') { loadEmbedConfig(); loadOriginConfig() }
   if (pageId === 'skills') loadGlobalSkills()
   if (pageId === 'connectors') loadConnectors()
   if (pageId === 'migrate') loadMigrateAgents()
@@ -4311,6 +4312,44 @@ document.getElementById('embedSaveBtn')?.addEventListener('click', async () => {
       if (status) status.textContent = `Aktuális: ${data.config.url} / ${data.config.model}${data.config.isDefault ? ' (alapértelmezett)' : ''}`
     }
     loadMemStats()
+  } catch { showToast('Hiba a mentés során') }
+  finally { if (btn) { btn.textContent = 'Mentés'; btn.disabled = false } }
+})
+
+async function loadOriginConfig() {
+  const baseWrap = document.getElementById('originBase')
+  const extra = document.getElementById('originExtra')
+  if (!baseWrap || !extra) return
+  try {
+    const res = await fetch('/api/settings/origins')
+    const cfg = await res.json()
+    baseWrap.innerHTML = ''
+    for (const o of (cfg.base || [])) {
+      const tag = document.createElement('code')
+      tag.textContent = o
+      tag.style.cssText = 'font-size:11px;background:var(--bg-elevated,rgba(255,255,255,.05));border:1px solid var(--border);border-radius:5px;padding:3px 7px'
+      baseWrap.appendChild(tag)
+    }
+    extra.value = cfg.extra || ''
+  } catch { /* dashboard not available */ }
+}
+
+document.getElementById('originSaveBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('originSaveBtn')
+  const extra = (document.getElementById('originExtra')?.value || '')
+  const status = document.getElementById('originStatus')
+  if (btn) { btn.textContent = 'Mentés...'; btn.disabled = true }
+  try {
+    const res = await fetch('/api/settings/origins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extra }),
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(data.error || 'Mentés sikertelen'); if (status) status.textContent = data.error || ''; return }
+    document.getElementById('originExtra').value = data.extra || ''
+    showToast('Engedélyezett origin-ok mentve.')
+    if (status) status.textContent = 'Mentve.'
   } catch { showToast('Hiba a mentés során') }
   finally { if (btn) { btn.textContent = 'Mentés'; btn.disabled = false } }
 })

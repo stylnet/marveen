@@ -4,6 +4,7 @@ import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { execSync, execFileSync } from 'node:child_process'
 import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL } from './config.js'
+import { getSetting } from './db.js'
 import { loadOrCreateDashboardToken, checkBearerToken } from './web/dashboard-auth.js'
 import { json } from './web/http-helpers.js'
 import { AGENTS_BASE_DIR, listAgentNames } from './web/agent-config.js'
@@ -79,6 +80,15 @@ export function startWebServer(port = 3420): http.Server {
     ...lanOrigins,
     ...(DASHBOARD_PUBLIC_URL ? [DASHBOARD_PUBLIC_URL.replace(/\/$/, '')] : []),
   ])
+  // Extra origins are editable from the Settings page and stored in app_settings,
+  // so they're resolved per-request (no restart needed). The base set above is
+  // the always-on floor; the stored list only adds, never removes.
+  const isAllowedOrigin = (origin: string): boolean => {
+    if (allowedOrigins.has(origin)) return true
+    const extra = getSetting('allowed_origins')
+    if (!extra) return false
+    return extra.split('\n').map(s => s.trim().replace(/\/$/, '')).filter(Boolean).includes(origin)
+  }
   const isSafeMethod = (m: string) => m === 'GET' || m === 'HEAD' || m === 'OPTIONS'
 
   const server = http.createServer(async (req, res) => {
@@ -87,7 +97,7 @@ export function startWebServer(port = 3420): http.Server {
     const method = req.method || 'GET'
 
     const origin = req.headers.origin
-    if (origin && allowedOrigins.has(origin)) {
+    if (origin && isAllowedOrigin(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
@@ -99,7 +109,7 @@ export function startWebServer(port = 3420): http.Server {
     // Same-origin fetches from the dashboard don't set Origin on some browsers, so we
     // accept requests where Origin is absent OR whitelisted. Requests carrying a foreign
     // Origin are rejected outright (this is the primary CSRF defence).
-    if (!isSafeMethod(method) && origin && !allowedOrigins.has(origin)) {
+    if (!isSafeMethod(method) && origin && !isAllowedOrigin(origin)) {
       res.writeHead(403, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Origin not allowed' }))
       return

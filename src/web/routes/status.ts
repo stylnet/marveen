@@ -1,9 +1,59 @@
+import { networkInterfaces } from 'node:os'
 import { logger } from '../../logger.js'
-import { json } from '../http-helpers.js'
+import { json, readBody } from '../http-helpers.js'
+import { WEB_HOST, DASHBOARD_PUBLIC_URL } from '../../config.js'
+import { getSetting, setSetting } from '../../db.js'
 import type { RouteContext } from './types.js'
 
+// Origins the server always trusts (mirrors the base set built in web.ts). Shown
+// in the Settings UI as read-only so the user understands what's covered before
+// adding extras. Recomputed here rather than imported to avoid leaking the
+// web.ts server closure across the route boundary.
+function baseOrigins(port: number): string[] {
+  const lan = (WEB_HOST === '0.0.0.0' || WEB_HOST === '::')
+    ? Object.values(networkInterfaces())
+        .flat()
+        .filter((ni): ni is NonNullable<typeof ni> => !!ni && ni.family === 'IPv4' && !ni.internal)
+        .map((ni) => `http://${ni.address}:${port}`)
+    : []
+  return [
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+    ...(WEB_HOST !== 'localhost' && WEB_HOST !== '127.0.0.1' && WEB_HOST !== '0.0.0.0' && WEB_HOST !== '::' ? [`http://${WEB_HOST}:${port}`] : []),
+    ...lan,
+    ...(DASHBOARD_PUBLIC_URL ? [DASHBOARD_PUBLIC_URL.replace(/\/$/, '')] : []),
+  ]
+}
+
+// scheme://host(:port) with no path/query/fragment -- a CORS Origin header is
+// exactly this shape, so anything else is a typo or an injection attempt.
+const ORIGIN_RE = /^https?:\/\/[a-zA-Z0-9.\-]+(:\d{1,5})?$/
+
 export async function tryHandleStatus(ctx: RouteContext): Promise<boolean> {
-  const { res, path, method } = ctx
+  const { req, res, path, method, url } = ctx
+
+  if (path === '/api/settings/origins' && method === 'GET') {
+    const port = Number(url.port) || 3420
+    const extra = getSetting('allowed_origins') || ''
+    json(res, { base: baseOrigins(port), extra })
+    return true
+  }
+
+  if (path === '/api/settings/origins' && method === 'POST') {
+    const body = await readBody(req)
+    let parsed: { extra?: unknown }
+    try { parsed = JSON.parse(body.toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+
+    const raw = typeof parsed.extra === 'string' ? parsed.extra : ''
+    const origins = raw.split('\n').map(s => s.trim().replace(/\/$/, '')).filter(Boolean)
+    const bad = origins.find(o => !ORIGIN_RE.test(o))
+    if (bad) { json(res, { error: `Érvénytelen origin: ${bad}` }, 400); return true }
+
+    // Store newline-joined and de-duplicated; web.ts reads this same key.
+    setSetting('allowed_origins', [...new Set(origins)].join('\n'))
+    json(res, { ok: true, extra: getSetting('allowed_origins') || '' })
+    return true
+  }
 
   if (path === '/api/status' && method === 'GET') {
     try {
