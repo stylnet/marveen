@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { logger } from '../logger.js'
 import { listAgentNames } from './agent-config.js'
 import { resolveFromPath } from '../platform.js'
+import { readEnvFile } from '../env.js'
 
 export interface SubtaskSuggestion {
   title: string
@@ -60,11 +61,16 @@ async function callClaudeP(userPrompt: string): Promise<SubtaskSuggestion[]> {
   const claude = resolveClaudeBinary()
   const fullPrompt = `${SYSTEM_PROMPT}\n\n${userPrompt}`
 
+  // The dashboard process never loads .env into process.env, so the spawned
+  // claude CLI would have no credentials ("Not logged in"). Inject them here.
+  const creds = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'])
+  const childEnv = { ...process.env, ...creds }
+
   return new Promise((resolve, reject) => {
     const child = execFile(
       claude,
       ['-p', '--model', 'claude-sonnet-4-6', '--output-format', 'json'],
-      { timeout: TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { timeout: TIMEOUT_MS, maxBuffer: 1024 * 1024, env: childEnv },
       (err, stdout, stderr) => {
         if (err) {
           if ((err as any).killed || err.message.includes('TIMEOUT') || err.message.includes('timed out')) {
