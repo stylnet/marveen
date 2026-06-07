@@ -823,10 +823,13 @@ export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
     // strict shape used for per-agent ollamaUrl to avoid an SSRF-ish open relay.
     const requested = url.searchParams.get('url')?.trim() || ''
     const base = requested && isValidOllamaUrl(requested) ? requested : OLLAMA_URL
+    // ?embed=1 inverts the filter: return ONLY embedding models, for the memory
+    // settings selector. Default (chat models) excludes embed models.
+    const embedOnly = url.searchParams.get('embed') === '1'
     try {
       const resp = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5000) })
       const data = await resp.json() as { models?: { name: string; size: number; details?: { parameter_size?: string } }[] }
-      const models = (data.models || []).filter(m => !m.name.includes('embed')).map(m => ({
+      const models = (data.models || []).filter(m => m.name.includes('embed') === embedOnly).map(m => ({
         name: m.name,
         size: Math.round(m.size / 1024 / 1024 / 1024 * 10) / 10 + ' GB',
         params: m.details?.parameter_size || '',

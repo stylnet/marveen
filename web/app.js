@@ -86,7 +86,7 @@ function switchPage(pageId) {
   if (pageId === 'kanban') loadKanban()
   if (pageId === 'tasks') loadSchedules()
   if (pageId === 'agents') loadAgents()
-  if (pageId === 'memories') { loadMemAgents(); loadMemStats(); loadMemories() }
+  if (pageId === 'memories') { loadMemAgents(); loadMemStats(); loadEmbedConfig(); loadMemories() }
   if (pageId === 'skills') loadGlobalSkills()
   if (pageId === 'connectors') loadConnectors()
   if (pageId === 'migrate') loadMigrateAgents()
@@ -4227,6 +4227,93 @@ async function loadMemStats() {
     console.error('Stats hiba:', err)
   }
 }
+
+let embedConfigState = { model: '', isDefault: true }
+
+async function fetchEmbedModels(serverUrl = '') {
+  const select = document.getElementById('embedModel')
+  if (!select) return
+  const current = select.value || embedConfigState.model || ''
+  select.innerHTML = ''
+  try {
+    const qs = `?embed=1${serverUrl ? `&url=${encodeURIComponent(serverUrl)}` : ''}`
+    const res = await fetch(`/api/ollama/models${qs}`)
+    const models = await res.json()
+    if (!Array.isArray(models) || models.length === 0) {
+      const opt = document.createElement('option')
+      opt.value = current
+      opt.textContent = current ? `${current} (nincs lekérdezve)` : 'nincs embedding modell'
+      select.appendChild(opt)
+      return
+    }
+    let hasCurrent = false
+    for (const m of models) {
+      const opt = document.createElement('option')
+      opt.value = m.name
+      opt.textContent = `${m.name} (${m.size})`
+      if (m.name === current) { opt.selected = true; hasCurrent = true }
+      select.appendChild(opt)
+    }
+    if (current && !hasCurrent) {
+      const opt = document.createElement('option')
+      opt.value = current
+      opt.textContent = `${current} (aktuális)`
+      opt.selected = true
+      select.insertBefore(opt, select.firstChild)
+    }
+  } catch { /* Ollama not reachable */ }
+}
+
+async function loadEmbedConfig() {
+  const urlInput = document.getElementById('embedUrl')
+  const status = document.getElementById('embedStatus')
+  if (!urlInput) return
+  try {
+    const res = await fetch('/api/memories/embedding-config')
+    const cfg = await res.json()
+    embedConfigState = { model: cfg.model || '', isDefault: !!cfg.isDefault }
+    urlInput.value = cfg.isDefault ? '' : (cfg.url || '')
+    if (status) status.textContent = `Aktuális: ${cfg.url} / ${cfg.model}${cfg.isDefault ? ' (alapértelmezett)' : ''}`
+    await fetchEmbedModels(urlInput.value.trim())
+  } catch { /* dashboard not available */ }
+}
+
+document.getElementById('embedFetchBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('embedFetchBtn')
+  const urlInput = document.getElementById('embedUrl')
+  if (btn) { btn.textContent = 'Lekérdezés...'; btn.disabled = true }
+  await fetchEmbedModels((urlInput?.value || '').trim())
+  if (btn) { btn.textContent = 'Modellek lekérdezése'; btn.disabled = false }
+})
+
+document.getElementById('embedSaveBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('embedSaveBtn')
+  const url = (document.getElementById('embedUrl')?.value || '').trim()
+  const model = (document.getElementById('embedModel')?.value || '').trim()
+  const status = document.getElementById('embedStatus')
+  const modelChanged = model && model !== embedConfigState.model
+  if (modelChanged && !confirm('A modell változott. Ez ÚJRA-embeddingeli az összes emléket (a régi vektorok inkompatibilisek). Folytatod?')) return
+  if (btn) { btn.textContent = 'Mentés...'; btn.disabled = true }
+  try {
+    const res = await fetch('/api/memories/embedding-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, model }),
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(data.error || 'Mentés sikertelen'); return }
+    embedConfigState = { model: data.config.model || '', isDefault: !!data.config.isDefault }
+    if (data.reembed) {
+      showToast('Mentve. Újra-embeddingelés indult a háttérben.')
+      if (status) status.textContent = `Aktuális: ${data.config.url} / ${data.config.model} -- újra-embeddingelés folyamatban...`
+    } else {
+      showToast('Embedding beállítás mentve.')
+      if (status) status.textContent = `Aktuális: ${data.config.url} / ${data.config.model}${data.config.isDefault ? ' (alapértelmezett)' : ''}`
+    }
+    loadMemStats()
+  } catch { showToast('Hiba a mentés során') }
+  finally { if (btn) { btn.textContent = 'Mentés'; btn.disabled = false } }
+})
 
 async function loadMemories() {
   if (currentMemTier === 'log' || currentMemTier === 'graph') return

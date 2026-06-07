@@ -1,10 +1,12 @@
 import {
   saveAgentMemory, getAgentMemories, searchAgentMemories, getMemoryStats, updateMemory,
-  hybridSearch, backfillEmbeddings,
+  hybridSearch, backfillEmbeddings, reembedAllMemories,
+  getEmbeddingConfig, setSetting,
   searchMemories, getMemoriesForChat, getDb,
   type Memory,
 } from '../../db.js'
 import { MAIN_AGENT_ID, ALLOWED_CHAT_ID, OLLAMA_URL } from '../../config.js'
+import { isValidOllamaUrl } from '../agent-config.js'
 import { logger } from '../../logger.js'
 import { readBody, json } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
@@ -211,6 +213,41 @@ Respond ONLY with JSON, nothing else:
       logger.error({ err }, 'Backfill failed')
       json(res, { error: 'Backfill failed' }, 500)
     }
+    return true
+  }
+
+  if (path === '/api/memories/embedding-config' && method === 'GET') {
+    json(res, getEmbeddingConfig())
+    return true
+  }
+
+  if (path === '/api/memories/embedding-config' && method === 'POST') {
+    const body = await readBody(req)
+    let parsed: { url?: unknown; model?: unknown }
+    try { parsed = JSON.parse(body.toString()) } catch { json(res, { error: 'Invalid JSON' }, 400); return true }
+
+    const url = typeof parsed.url === 'string' ? parsed.url.trim() : ''
+    const model = typeof parsed.model === 'string' ? parsed.model.trim() : ''
+    // Empty url means "use the global default". A non-empty one must pass the
+    // same strict shape check as per-agent ollamaUrl.
+    if (url && !isValidOllamaUrl(url)) { json(res, { error: 'invalid ollama url' }, 400); return true }
+    // Model is sent as JSON to Ollama (not a shell), so a sane charset is enough.
+    if (model && !/^[A-Za-z0-9._:/\-]+$/.test(model)) { json(res, { error: 'invalid model name' }, 400); return true }
+
+    const prev = getEmbeddingConfig()
+    setSetting('embedding_url', url)
+    setSetting('embedding_model', model)
+    const next = getEmbeddingConfig()
+
+    // A host change keeps the same vectors valid; a model change does not, so
+    // re-embed everything in the background and tell the UI it's happening.
+    const modelChanged = prev.model !== next.model
+    if (modelChanged) {
+      reembedAllMemories()
+        .then(count => logger.info({ count, model: next.model }, 'Re-embedded memories after model change'))
+        .catch(err => logger.error({ err }, 'Re-embed after model change failed'))
+    }
+    json(res, { ok: true, reembed: modelChanged, config: next })
     return true
   }
 

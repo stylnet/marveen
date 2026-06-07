@@ -484,6 +484,16 @@ export function initDatabase(dbPathOverride?: string): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tool_log_session ON tool_call_log(session_id, created_at)`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tool_log_ts ON tool_call_log(created_at)`)
 
+  // Generic key/value store for runtime-editable settings that should outlive a
+  // process restart but don't warrant their own table (e.g. the embedding host
+  // and model chosen from the dashboard, overriding the env defaults).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `)
+
   // One-shot migration from the old JSON file (which had a read-modify-write
   // race). Import rows if they exist, then rename the file so we don't keep
   // re-importing. Wrapped in a transaction so a crash mid-import is safe.
@@ -1385,16 +1395,41 @@ export function markPendingTaskRetryAlert(taskName: string, agentName: string, t
     .run(ts, taskName, agentName).changes > 0
 }
 
+// --- App settings (generic key/value store) ---
+
+export function getSetting(key: string): string | null {
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | undefined
+  return row ? row.value : null
+}
+
+export function setSetting(key: string, value: string): void {
+  db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
+}
+
 // --- Vector Search (Ollama embeddings) ---
-// Model + host come from config (EMBED_MODEL / EMBED_OLLAMA_URL) so the embedding
-// backend can be pointed at a dedicated GPU box independent of the global Ollama.
+// Host + model are resolved at call time from app_settings so the dashboard can
+// repoint embedding at a dedicated GPU box without a restart; the env vars
+// (EMBED_OLLAMA_URL / EMBED_MODEL) are the defaults when nothing is stored.
+// Every embedding path -- memory save, search, heartbeat -- funnels through
+// generateEmbedding, so this single lookup makes the whole system dynamic.
+
+export function getEmbeddingConfig(): { url: string; model: string; isDefault: boolean } {
+  const url = getSetting('embedding_url')
+  const model = getSetting('embedding_model')
+  return {
+    url: url || EMBED_OLLAMA_URL,
+    model: model || EMBED_MODEL,
+    isDefault: !url && !model,
+  }
+}
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
+  const { url, model } = getEmbeddingConfig()
   try {
-    const resp = await fetch(`${EMBED_OLLAMA_URL}/api/embeddings`, {
+    const resp = await fetch(`${url}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, prompt: text.slice(0, 2000) }),
+      body: JSON.stringify({ model, prompt: text.slice(0, 2000) }),
     })
     const data = await resp.json() as { embedding?: number[] }
     return data.embedding || null
@@ -1402,7 +1437,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
     // Debug-level so it doesn't spam default INFO logs when Ollama isn't
     // running (the common case on most user machines). Enables "why does
     // hybrid search only return FTS results?" diagnostics without noise.
-    logger.debug({ err, ollamaUrl: EMBED_OLLAMA_URL }, 'Embedding generation failed (Ollama not running?)')
+    logger.debug({ err, ollamaUrl: url }, 'Embedding generation failed (Ollama not running?)')
     return null
   }
 }
@@ -1477,6 +1512,15 @@ export async function backfillEmbeddings(): Promise<number> {
     await new Promise(r => setTimeout(r, 100))
   }
   return count
+}
+
+// Re-embed every memory. Needed after an embedding-model change: vectors from a
+// different model live in a different space (and often a different dimension),
+// so mixing them with new ones makes cosine similarity meaningless. Clearing the
+// column first lets backfillEmbeddings regenerate all of them with the new model.
+export async function reembedAllMemories(): Promise<number> {
+  db.prepare('UPDATE memories SET embedding = NULL').run()
+  return backfillEmbeddings()
 }
 
 // --- Pending Channel Requests ---
