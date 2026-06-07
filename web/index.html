@@ -1454,6 +1454,14 @@
               <optgroup label="🏠 Ollama (lokális)" id="ollamaModelGroup">
               </optgroup>
             </select>
+            <div class="ollama-server-row" style="margin-top:8px">
+              <label for="editAgentOllamaUrl" style="font-size:12px;color:var(--text-muted)">Ollama szerver (opcionális, lokál modellhez)</label>
+              <div style="display:flex;gap:6px;margin-top:4px">
+                <input type="text" id="editAgentOllamaUrl" placeholder="http://192.168.0.32:11434" style="flex:1">
+                <button class="btn-secondary btn-compact" id="fetchOllamaModelsBtn" type="button">Modellek lekérdezése</button>
+              </div>
+              <small id="ollamaFetchHint" style="display:none;margin-top:4px;color:var(--text-muted);font-size:12px"></small>
+            </div>
             <button class="btn-secondary btn-compact agent-save-section" id="saveModelBtn">Mentés</button>
             <small id="deepseekHint" style="display:none;margin-top:6px;color:var(--text-muted);font-size:12px;line-height:1.4">
               DeepSeek-V4-Pro nincs konfigurálva. <a href="#" id="deepseekConfigLink">API kulcs hozzáadása</a> a Vault oldalon.

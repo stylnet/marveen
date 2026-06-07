@@ -72,6 +72,47 @@ export function writeAgentModel(name: string, model: string): void {
   atomicWriteFileSync(configPath, JSON.stringify(config, null, 2))
 }
 
+// Optional per-agent Ollama base URL. When set, an Ollama-backed agent talks to
+// this address instead of the global OLLAMA_URL -- letting one agent use a
+// remote Ollama host (e.g. a beefier GPU box) without redirecting the fleet's
+// memory-embedding traffic, which always uses the global OLLAMA_URL.
+//
+// The launcher inlines this value UNQUOTED into a tmux shell command
+// (`export ANTHROPIC_BASE_URL=<value>`), so it must be shell-safe. We whitelist
+// a strict http(s) URL shape; anything containing shell metacharacters or a bad
+// shape returns null and the caller falls back to the global OLLAMA_URL.
+const OLLAMA_URL_RE = /^https?:\/\/[A-Za-z0-9.\-]+(?::\d{1,5})?(?:\/[A-Za-z0-9._~\-/]*)?$/
+
+export function isValidOllamaUrl(url: string): boolean {
+  return OLLAMA_URL_RE.test(url.trim())
+}
+
+export function readAgentOllamaUrl(name: string): string | null {
+  const configPath = join(agentDir(name), 'agent-config.json')
+  try {
+    const config = JSON.parse(readFileOr(configPath, '{}'))
+    const raw = typeof config.ollamaUrl === 'string' ? config.ollamaUrl.trim() : ''
+    if (raw && OLLAMA_URL_RE.test(raw)) return raw
+  } catch { /* fall through */ }
+  return null
+}
+
+// Persist (or clear) the per-agent Ollama base URL. Empty string removes it so
+// the agent falls back to the global OLLAMA_URL. A non-empty value must pass the
+// strict shape check (it gets inlined unquoted into the launcher shell command).
+export function writeAgentOllamaUrl(name: string, url: string): void {
+  const trimmed = url.trim()
+  if (trimmed && !OLLAMA_URL_RE.test(trimmed)) {
+    throw new Error('invalid ollamaUrl shape')
+  }
+  const configPath = join(agentDir(name), 'agent-config.json')
+  let config: Record<string, unknown> = {}
+  try { config = JSON.parse(readFileOr(configPath, '{}')) } catch {}
+  if (trimmed) config.ollamaUrl = trimmed
+  else delete config.ollamaUrl
+  atomicWriteFileSync(configPath, JSON.stringify(config, null, 2))
+}
+
 export function readAgentDisplayName(name: string): string {
   const configPath = join(agentDir(name), 'agent-config.json')
   try {

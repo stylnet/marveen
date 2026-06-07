@@ -10,7 +10,7 @@ import {
   type McpListEntry,
 } from '../../mcp-list-parser.js'
 import { atomicWriteFileSync } from '../atomic-write.js'
-import { readFileOr, AGENTS_BASE_DIR, listAgentNames } from '../agent-config.js'
+import { readFileOr, AGENTS_BASE_DIR, listAgentNames, isValidOllamaUrl } from '../agent-config.js'
 import { getMcpListCache, refreshMcpListCache, purgeFromMcpListCache } from '../mcp-list.js'
 import { readBody, json } from '../http-helpers.js'
 import { shellEscape } from '../sanitize.js'
@@ -97,7 +97,7 @@ function upsertLocalCatalogEntry(entry: any): void {
 }
 
 export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
-  const { req, res, path, method } = ctx
+  const { req, res, path, method, url } = ctx
 
   // GET /api/connectors -- list every MCP server visible to Claude Code,
   // pulled from the local config files plus the cached `claude mcp list`
@@ -818,8 +818,13 @@ export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
 
   // === Ollama ===
   if (path === '/api/ollama/models' && method === 'GET') {
+    // Optional ?url= lets the operator query a specific Ollama host (e.g. a
+    // remote GPU box) instead of the global one. Validated against the same
+    // strict shape used for per-agent ollamaUrl to avoid an SSRF-ish open relay.
+    const requested = url.searchParams.get('url')?.trim() || ''
+    const base = requested && isValidOllamaUrl(requested) ? requested : OLLAMA_URL
     try {
-      const resp = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(5000) })
+      const resp = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5000) })
       const data = await resp.json() as { models?: { name: string; size: number; details?: { parameter_size?: string } }[] }
       const models = (data.models || []).filter(m => !m.name.includes('embed')).map(m => ({
         name: m.name,

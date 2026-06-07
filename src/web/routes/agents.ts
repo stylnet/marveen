@@ -17,6 +17,8 @@ import {
   resolveModelId,
   readAgentModel,
   writeAgentModel,
+  readAgentOllamaUrl,
+  writeAgentOllamaUrl,
   readAgentDisplayName,
   writeAgentDisplayName,
   readAgentSecurityProfile,
@@ -287,6 +289,7 @@ interface AgentDetail extends AgentSummary {
   skills: { name: string; hasSkillMd: boolean }[]
   hasAvatar: boolean
   hasApiKey: boolean
+  ollamaUrl: string
 }
 
 function getAgentSummary(name: string): AgentSummary {
@@ -359,6 +362,7 @@ function getAgentDetail(name: string): AgentDetail {
     skills,
     hasAvatar: findAvatarForAgent(name) !== null,
     hasApiKey: getSecret(`agent-${name}-api-key`) !== null,
+    ollamaUrl: readAgentOllamaUrl(name) ?? '',
   }
 }
 
@@ -1256,12 +1260,20 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     const configRoot = agentConfigRoot(name)
     const data = JSON.parse(body.toString()) as {
       claudeMd?: string; soulMd?: string; mcpJson?: string; model?: string
-      authMode?: AuthMode; apiKey?: string
+      authMode?: AuthMode; apiKey?: string; ollamaUrl?: string
     }
     if (data.claudeMd !== undefined) atomicWriteFileSync(join(configRoot, 'CLAUDE.md'), data.claudeMd)
     if (data.soulMd !== undefined) atomicWriteFileSync(join(agentDir(name), 'SOUL.md'), data.soulMd)
     if (data.mcpJson !== undefined) atomicWriteFileSync(join(agentDir(name), '.mcp.json'), data.mcpJson)
     if (data.model !== undefined) writeAgentModel(name, data.model)
+    if (data.ollamaUrl !== undefined) {
+      try {
+        writeAgentOllamaUrl(name, data.ollamaUrl)
+      } catch {
+        json(res, { error: 'Érvénytelen Ollama-cím. Várt formátum: http://host:port' }, 400)
+        return true
+      }
+    }
     if (data.authMode !== undefined) {
       writeAgentAuthMode(name, data.authMode)
       if (data.authMode === 'api' && typeof data.apiKey === 'string' && data.apiKey.trim()) {

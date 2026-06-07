@@ -1620,7 +1620,9 @@ async function openAgentDetail(agentName) {
 
   // Settings tab - load Ollama + DeepSeek models then set value
   loadAvailableModels()
-  loadOllamaModels().then(() => {
+  const ollamaUrlInput = document.getElementById('editAgentOllamaUrl')
+  if (ollamaUrlInput) ollamaUrlInput.value = currentAgent.ollamaUrl || ''
+  loadOllamaModels(currentAgent.ollamaUrl || '').then(() => {
     document.getElementById('editAgentModel').value = currentAgent.activeModel || currentAgent.model || 'claude-sonnet-4-6'
   })
   populateProfileSelect(
@@ -2022,12 +2024,13 @@ function switchAgentTab(tab) {
 }
 
 // === Settings save buttons ===
-async function loadOllamaModels() {
+async function loadOllamaModels(serverUrl = '') {
   const group = document.getElementById('ollamaModelGroup')
-  if (!group) return
+  if (!group) return 0
   group.innerHTML = ''
   try {
-    const res = await fetch('/api/ollama/models')
+    const qs = serverUrl ? `?url=${encodeURIComponent(serverUrl)}` : ''
+    const res = await fetch(`/api/ollama/models${qs}`)
     const models = await res.json()
     for (const m of models) {
       const opt = document.createElement('option')
@@ -2035,7 +2038,8 @@ async function loadOllamaModels() {
       opt.textContent = `${m.name} (${m.size})`
       group.appendChild(opt)
     }
-  } catch { /* Ollama not available */ }
+    return Array.isArray(models) ? models.length : 0
+  } catch { /* Ollama not available */ return 0 }
 }
 
 // Populates the DeepSeek optgroups in both the wizard and the agent edit
@@ -2131,18 +2135,36 @@ function startModelRestartPolling(name, expectedModel, triggeredAt) {
   }, 2000)
 }
 
+const fetchOllamaBtn = document.getElementById('fetchOllamaModelsBtn')
+if (fetchOllamaBtn) {
+  fetchOllamaBtn.addEventListener('click', async () => {
+    const input = document.getElementById('editAgentOllamaUrl')
+    const hint = document.getElementById('ollamaFetchHint')
+    const serverUrl = (input?.value || '').trim()
+    if (hint) { hint.style.display = 'block'; hint.textContent = 'Lekérdezés...' }
+    const count = await loadOllamaModels(serverUrl)
+    if (hint) {
+      hint.textContent = count > 0
+        ? `${count} modell betöltve. Válassz a Modell listából (🏠 Ollama), majd Mentés.`
+        : 'Nem sikerült modellt lekérni erről a címről. Ellenőrizd az IP-t/portot és hogy fut-e az Ollama.'
+    }
+  })
+}
+
 document.getElementById('saveModelBtn').addEventListener('click', async () => {
   if (!currentAgent || currentAgent.role === 'main') return
   const newModel = document.getElementById('editAgentModel').value
+  const ollamaUrl = (document.getElementById('editAgentOllamaUrl')?.value || '').trim()
   const name = currentAgent.name
   try {
     const res = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: newModel }),
+      body: JSON.stringify({ model: newModel, ollamaUrl }),
     })
     if (!res.ok) throw new Error()
     currentAgent.model = newModel
+    currentAgent.ollamaUrl = ollamaUrl
     const triggeredAt = Math.floor(Date.now() / 1000)
     document.getElementById('agentDetailModelRestarting').hidden = false
     document.getElementById('processLabel').textContent = 'Újraindítás'
